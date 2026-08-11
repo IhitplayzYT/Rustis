@@ -1,0 +1,95 @@
+pub mod cache{
+    use std::{cell::RefCell, collections::HashMap, rc::Rc};
+    
+
+    use crate::slave::dll::dll::{DLL, Node};
+    
+
+
+    pub struct Cache{
+        pub map: HashMap<String,(Rc<RefCell<Node<String>>>,Option<usize>)>,
+        pub dll:DLL<String>,
+    }
+
+    pub enum s_TTL{
+        Alive,
+        Dead,
+        NA
+    }
+
+    impl Cache{
+        pub fn new(cap:Option<usize>,evic:Option<fn(&mut DLL<String>) -> Option<String>>) -> Self{
+            Self { map: HashMap::new(), dll: DLL::new(cap, evic)}
+        }
+
+        pub fn add(&mut self,k: String,v:String){
+            let old_key = self.dll.push_back(k, v);
+            if let Some(o) = old_key{
+                println!("[REMOVE] Removing Key {o}")
+            }
+        }
+
+        pub fn get(&self,k: String) -> Option<String>{
+            if let Some(z) = self.map.get(&k){
+                Some(z.0.borrow().get_value())
+            }else{
+                None
+            }
+        }
+
+        pub fn get_ttl(&self,k: String) -> Option<usize>{
+            if let Some(o) = self.map.get(&k){
+                o.1
+            }else{
+                None
+            }
+        }
+
+        pub fn decr_ttl(&mut self,k: String) -> Option<s_TTL>{
+            if let Some(o) = self.map.get_mut(&k){
+                if let Some(mut p) = o.1{
+                    p = p.saturating_sub(1);
+                    if p > 0 {
+                        return Some(s_TTL::Alive);
+                    }else{
+                        return Some(s_TTL::Dead);
+                    }
+                }else{
+                    return Some(s_TTL::NA);
+                }
+            }else{
+                return None;
+            }
+        }
+
+        pub fn delete(&mut self,k: String){
+            if let Some(z) = self.map.get(&k){
+                if Node::remove_self(&z.0){
+                    self.dll.len -= 1;
+                }
+            self.map.remove(&k);
+            }
+        }
+
+        pub fn update(&mut self,k: String,v:Option<String>,ttl:Option<usize>) -> bool{
+            if let Some(x) = self.map.get_mut(&k){
+                if let Some(value) = v{
+                    x.0.borrow_mut().set_value(value);
+                }
+                x.1 = ttl;
+                return true;
+            }
+           false 
+        }
+
+
+    }
+
+
+
+
+ 
+
+
+
+}
