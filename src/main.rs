@@ -50,7 +50,7 @@ async fn main() -> Result<(),Box<dyn Error>>{
                 .route(UPDATE, put(update_handler))
                 .route(HEALTH, get(health_handler))
                 .route(INSERT_KVS, post(insert_kvs_handler))
-                .route(COMM_MASTER, post(comm_master_handler))
+                .route(COMM_MASTER, post(comm_master_post_handler).get(comm_master_get_handler))
                 .with_state(rustis_node);
 
             let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", clargs.port)).await?;

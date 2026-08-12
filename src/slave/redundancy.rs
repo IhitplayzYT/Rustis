@@ -1,11 +1,12 @@
 pub mod redundancy{
-    use crate::{helper::Helper::{HIGH, LOW}, slave::{cache::cache::Cache, dll::dll::DLL}};
-    use tokio::sync::RwLock;
+    use crate::{helper::Helper::{HIGH, LOW}, slave::{cache::cache::Cache, dll::dll::DLL, endpoints::endpoints::Topo}};
+    use serde::Serialize;
+use tokio::sync::RwLock;
 use xxhash_rust::xxh3::xxh3_64;
     use std::{collections::{BTreeSet, BinaryHeap}, sync::Arc};
     use rand::{Rng, distr::Alphanumeric};
 
-    #[derive(Debug,Clone,PartialEq, Eq)]
+    #[derive(Debug,Clone,PartialEq, Eq,Serialize)]
     pub enum Priority{
         Low,
         Default,
@@ -92,7 +93,7 @@ use xxhash_rust::xxh3::xxh3_64;
     }
 
 
-    #[derive(Debug,Clone,PartialEq, Eq)]
+    #[derive(Debug,Clone,PartialEq, Eq,Serialize)]
     pub struct Routes{
         ip: String,
         port: u16,
@@ -118,12 +119,14 @@ use xxhash_rust::xxh3::xxh3_64;
         pub redundancies: BinaryHeap<Routes>,
         pub is_down:bool,
         pub orchestrator: Option<Routes>,
+        current_route_index: usize,
     }
+
 
     
     impl Cache_Net{
         pub fn new(cap:Option<usize>,evic: Option<fn (&mut DLL<String>) -> Option<String>>) -> Self{
-            Self { cache: Cache::new(cap, evic), redundancies: BinaryHeap::new(),vnodes:BTreeSet::new(),is_down:false,orchestrator:None}
+            Self { cache: Cache::new(cap, evic), redundancies: BinaryHeap::new(),vnodes:BTreeSet::new(),is_down:false,orchestrator:None, current_route_index: 0}
         }
 
         pub fn save_orchestrator(&mut self,ip: String,port:u16){
@@ -166,15 +169,26 @@ use xxhash_rust::xxh3::xxh3_64;
             routes.iter().for_each(|x| {self.redundancies.push(Routes::new(x.0.clone(), x.1, x.2.clone()));});
         }
 
-        fn get_next_highest_priority(&self) -> Option<Routes> {
-            let mut heap: BinaryHeap<Routes> = self.redundancies.clone();
-            heap.pop()
+        fn get_next_highest_priority(&mut self) -> Option<Routes> {
+            if self.redundancies.is_empty() {
+                return None;
+            }
+            let routes: Vec<Routes> = self.redundancies.clone().into_sorted_vec();
+            let route = routes.get(self.current_route_index).cloned();
+            self.current_route_index = (self.current_route_index + 1) % routes.len();
+            route
         }
 
-        pub async fn send_data(&self) -> Result<(), Box<dyn std::error::Error>> {
+        pub fn get_topo(&self) -> Topo{
+            let mut redundancies = self.redundancies.clone().into_iter().collect::<Vec<Routes>>();
+            redundancies.sort();
+            Topo { vnodes: self.vnodes.clone().into_iter().collect(), redundancies}
+
+        }
+
+        pub async fn send_data(&mut self) -> Result<(), Box<dyn std::error::Error>> {
             if let Some(target) = self.get_next_highest_priority() {
                 let target_url = target.get_url();
-                
                 if reqwest::get(&format!("{}/health", target_url)).await?.status().is_success() {
                     let kvs: Vec<(String, String, Option<usize>)> = self.cache.get_items().into_iter().map(|(k, v)| (k.clone(), v, self.cache.get_ttl(k))).collect();
                     
@@ -182,6 +196,7 @@ use xxhash_rust::xxh3::xxh3_64;
                     let resp = client.post(&format!("{}/item/", target_url)).json(&kvs).send().await?;
                     if resp.status().is_success() {
                         println!("[SEND_DATA] Successfully sent {} KV pairs to {}", kvs.len(), target_url);
+                        let _ = self.inform_master().await;
                         return Ok(());
                     } else {
                         println!("[SEND_DATA] Failed to send data to {}: {}", target_url, resp.status());
@@ -221,6 +236,34 @@ use xxhash_rust::xxh3::xxh3_64;
             }
             println!("[RESYNC] No available redundancy targets");
             Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "No redundancy targets")))
+        }
+
+        async fn inform_master(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+            if let Some(target) = self.get_next_highest_priority() {
+                if let Some(orchestrator) = &self.orchestrator {
+                    let orchestrator_url = orchestrator.get_url();
+                    let change_url = format!("{}/change", orchestrator_url);
+                    
+                    let client = reqwest::Client::new();
+                    let resp = client.post(&change_url)
+                        .json(&target)
+                        .send()
+                        .await?;
+                    
+                    if resp.status().is_success() {
+                        println!("[INFORM_MASTER] Successfully informed master about chosen redundancy node: {}:{}", target.ip, target.port);
+                        return Ok(());
+                    } else {
+                        println!("[INFORM_MASTER] Failed to inform master: {}", resp.status());
+                        return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Failed to inform master")));
+                    }
+                } else {
+                    println!("[INFORM_MASTER] No orchestrator configured");
+                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "No orchestrator configured")));
+                }
+            }
+            println!("[INFORM_MASTER] No available redundancy nodes to inform master about");
+            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "No redundancy nodes")))
         }
 
         pub async fn down(&mut self) {

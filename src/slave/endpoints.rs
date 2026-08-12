@@ -3,7 +3,7 @@ pub mod endpoints{
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
-use crate::slave::redundancy::redundancy::Rustis_Node;
+use crate::slave::redundancy::redundancy::{Routes, Rustis_Node};
 
 
     pub const CONTAINS_K: &str = "/key/{key}";
@@ -107,10 +107,22 @@ use crate::slave::redundancy::redundancy::Rustis_Node;
         Ok(Json(true))
     }
 
-    pub async fn comm_master_handler(State(state): State<Rustis_Node>,Json(req): Json<CommMasterRequest>) -> Result<Json<bool>, StatusCode>{
+    pub async fn comm_master_post_handler(State(state): State<Rustis_Node>,Json(req): Json<CommMasterRequest>) -> Result<Json<bool>, StatusCode>{
         let mut cache_net = state.cache.write().await;
         cache_net.save_orchestrator(req.ip, req.port);
         Ok(Json(true))
+    }
+
+
+    #[derive(Serialize)]
+    pub struct Topo{
+        pub vnodes: Vec<usize>,
+        pub redundancies: Vec<Routes>
+    }
+
+    pub async fn comm_master_get_handler(State(state): State<Rustis_Node>) -> Result<Json<Topo>, StatusCode>{
+        let cache_net = state.cache.write().await;
+        Ok(Json(cache_net.get_topo()))
     }
 
 }
