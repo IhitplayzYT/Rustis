@@ -1,13 +1,15 @@
 pub mod Helper{
-    use std::process::exit;
+    use std::{process::exit, sync::{LazyLock, RwLock}};
 
 
 
-    const DBG_STR: &str = "";
-    const OK:i32 = 0;
-    const ERR:i32 = -1;
-    const N_VNODES:usize = 4;
-    const PORT:usize = 8080;
+    pub const DBG_STR: &str = "";
+    pub const OK:i32 = 0;
+    pub const ERR:i32 = -1;
+    pub const N_VNODES:usize = 4;
+    pub const PORT:usize = 8080;
+    pub static LOW: LazyLock<RwLock<usize>> = LazyLock::new(|| RwLock::new(10));
+    pub static HIGH: LazyLock<RwLock<usize>> = LazyLock::new(|| RwLock::new(200));
 
 
     #[derive(Debug,Clone)]
@@ -61,8 +63,12 @@ pub mod Helper{
                     self.role = Role::from(i[i.find("=").unwrap()+1..].to_string());
                 } else if i.starts_with("--n_vnodes=") || i.starts_with("-n="){
                     self.n_vnode = i[i.find("=").unwrap()+1..].parse().expect("No of Vnodes should be an unsigned int");
-                }  else if i.starts_with("--port=") || i.starts_with("-p="){
+                } else if i.starts_with("--port=") || i.starts_with("-p="){
                     self.port = i[i.find("=").unwrap()+1..].parse().expect("Port is a 16 bit unsigned integer");
+                } else if i.starts_with("--max=") || i.starts_with("-mx="){
+                    *HIGH.try_write().unwrap() = i[i.find("=").unwrap()+1..].parse().expect("Port is a 16 bit unsigned integer");
+                } else if i.starts_with("--min=") || i.starts_with("-mn="){
+                    *LOW.try_write().unwrap() = i[i.find("=").unwrap()+1..].parse().expect("Port is a 16 bit unsigned integer");
                 } else if (i.starts_with("--replica[") && i.ends_with("]")) || (i.starts_with("--replicas[") && i.ends_with("]")) || (i.starts_with("-rep[") && i.ends_with("]")){
                    self.replica.append(&mut i[i.find("[").unwrap()+1..i.find("]").unwrap()].split(",").map(|x| x.to_string()).collect::<Vec<String>>());
                 } else if (i.starts_with("--node[") && i.ends_with("]")) || (i.starts_with("--nodes[") && i.ends_with("]")){
@@ -71,6 +77,11 @@ pub mod Helper{
                     Help();
                 }
            } 
+
+           if LOW.try_read().unwrap().ge(&*HIGH.try_read().unwrap()){
+            panic!("High has to be always greater then LOW, this is used to generate Collision free Hashes for Vnodes");
+           }
+
         }
 
 

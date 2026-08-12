@@ -6,6 +6,7 @@ pub mod cache{
     
 
 
+    #[derive(Debug)]
     pub struct Cache{
         pub map: HashMap<String,(Rc<RefCell<Node<String>>>,Option<usize>)>,
         pub dll:DLL<String>,
@@ -20,6 +21,33 @@ pub mod cache{
     impl Cache{
         pub fn new(cap:Option<usize>,evic:Option<fn(&mut DLL<String>) -> Option<String>>) -> Self{
             Self { map: HashMap::new(), dll: DLL::new(cap, evic)}
+        }
+
+        pub fn contains_key(&self,k: String) -> bool{
+            self.map.contains_key(&k)
+        }
+
+        pub fn contains_value(&self,v: String) -> Option<String>{
+            let mut ret = None;
+            for (k,val) in self.dll.iter(){
+                if val == v {
+                    ret = Some(k);
+                    break;
+                } 
+            }
+            ret
+        }
+
+        pub fn get_keys(&self) -> Vec<String>{
+            self.map.keys().map(|x| x.to_owned()).collect()
+        }
+
+        pub fn get_values(&self) -> Vec<String>{
+            self.dll.iter().map(|x| x.1).collect()
+        }
+
+        pub fn get_items(&self) -> Vec<(String,String)>{
+            self.dll.iter().collect()
         }
 
         pub fn add(&mut self,k: String,v:String){

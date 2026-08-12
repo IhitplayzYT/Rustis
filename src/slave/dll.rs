@@ -58,6 +58,7 @@ use std::rc::Rc;
 
 
 
+    #[derive(Debug)]
     pub struct DLL<T:Clone>{
         pub head: Link<T>,
         pub tail: Link<T>,
@@ -65,6 +66,8 @@ use std::rc::Rc;
         pub cap: usize,
         pub eviction_policy: fn(&mut DLL<T>) -> Option<T>
     }
+
+
 
     impl <T:Clone> DLL<T>{
         pub fn new(cap:Option<usize>,evic:Option<fn(&mut DLL<T>) -> Option<T>>) -> Self{
@@ -165,11 +168,30 @@ use std::rc::Rc;
             k
         }
 
+    pub fn iter(&self) -> Iter<T> {
+        Iter {current: self.head.clone()}
+    }
+
 
     }
 
 
+pub struct Iter<T:Clone> {
+    current: Link<T>,
+}
 
+impl<T: Clone> Iterator for Iter<T> {
+    type Item = (T,T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let node = self.current.take()?;
+        let borrowed = node.borrow();
+        let value = borrowed.get_value();
+        let key = borrowed.get_key();
+        self.current = borrowed.next.clone();
+        Some((key,value))
+    }
+}
 
 
 
