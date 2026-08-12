@@ -34,9 +34,11 @@ pub mod Helper{
     pub struct CLI{
         pub dbg: bool,
         pub role: Role,
+        pub cache_cap: Option<usize>,
         pub n_vnode: usize,
         pub replica: Vec<String>,
         pub nodes: Vec<String>,
+        pub evic_policy: Option<String>,
         pub port: u16
     }
 
@@ -49,7 +51,7 @@ pub mod Helper{
 
     impl CLI{
         pub fn new() -> Self{
-            Self {dbg: false,role: Role::Slaves,n_vnode:N_VNODES,replica:vec![],nodes:vec![],port:8080}
+            Self {dbg: false,role: Role::Slaves,n_vnode:N_VNODES,replica:vec![],nodes:vec![],port:8080,evic_policy:None,cache_cap:None}
         }
 
         pub fn Parse_Args(&mut self){
@@ -65,6 +67,8 @@ pub mod Helper{
                     self.n_vnode = i[i.find("=").unwrap()+1..].parse().expect("No of Vnodes should be an unsigned int");
                 } else if i.starts_with("--port=") || i.starts_with("-p="){
                     self.port = i[i.find("=").unwrap()+1..].parse().expect("Port is a 16 bit unsigned integer");
+                } else if i.starts_with("--cap=") || i.starts_with("-c="){
+                    self.cache_cap = Some(i[i.find("=").unwrap()+1..].parse().expect("Cache capacity is the number of kv pairs it can hold being a whole number"));
                 } else if i.starts_with("--max=") || i.starts_with("-mx="){
                     *HIGH.try_write().unwrap() = i[i.find("=").unwrap()+1..].parse().expect("Port is a 16 bit unsigned integer");
                 } else if i.starts_with("--min=") || i.starts_with("-mn="){
@@ -73,6 +77,8 @@ pub mod Helper{
                    self.replica.append(&mut i[i.find("[").unwrap()+1..i.find("]").unwrap()].split(",").map(|x| x.to_string()).collect::<Vec<String>>());
                 } else if (i.starts_with("--node[") && i.ends_with("]")) || (i.starts_with("--nodes[") && i.ends_with("]")){
                    self.nodes.append(&mut i[i.find("[").unwrap()+1..i.find("]").unwrap()].split(",").map(|x| x.to_string()).collect::<Vec<String>>());
+                } else if i.starts_with("-ep=") || i.starts_with("--evic_policy="){
+                    self.evic_policy = Some(i[i.find("=").unwrap()+1..].to_string());
                 } else{
                     Help();
                 }
@@ -87,12 +93,5 @@ pub mod Helper{
 
 
     }
-
-
-    
-
-
-
-
 
 }

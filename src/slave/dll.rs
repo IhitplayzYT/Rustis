@@ -1,5 +1,6 @@
 pub mod dll{
-    use std::num::IntErrorKind::NegOverflow;
+    use std::collections::HashMap;
+use std::num::IntErrorKind::NegOverflow;
 use std::rc::Rc;
     use std::cell::RefCell;
 
@@ -193,10 +194,45 @@ impl<T: Clone> Iterator for Iter<T> {
     }
 }
 
+pub type EvictionPolicy<T> = fn(&mut DLL<T>) -> Option<T>;
+
+pub fn fifo<T: Clone>(dll: &mut DLL<T>) -> Option<T> {
+    dll.pop_front()
+}
+
+pub fn lifo<T: Clone>(dll: &mut DLL<T>) -> Option<T> {
+    dll.pop_back()
+}
 
 
+pub struct EvictionRegistry<T: Clone> {
+    policies: HashMap<String, EvictionPolicy<T>>,
+}
 
+impl<T: Clone> EvictionRegistry<T> {
+    pub fn new() -> Self {
+        Self {policies: HashMap::new()}
+    }
 
+    pub fn register(&mut self,name: impl Into<String>,policy: EvictionPolicy<T>) {
+        self.policies.insert(name.into(), policy);
+    }
 
+    pub fn get(&self,name: &str) -> Option<EvictionPolicy<T>> {
+        self.policies.get(name).copied()
+    }
+
+    pub fn remove(&mut self,name: &str) -> Option<EvictionPolicy<T>> {
+        self.policies.remove(name)
+    }
+
+    pub fn contains(&self, name: &str) -> bool {
+        self.policies.contains_key(name)
+    }
+
+    pub fn len(&self) -> usize {
+        self.policies.len()
+    }
+}
 
 }

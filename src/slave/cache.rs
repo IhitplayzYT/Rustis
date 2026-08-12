@@ -52,11 +52,13 @@ pub mod cache{
             self.dll.iter().collect()
         }
 
-        pub fn add(&mut self,k: String,v:String){
-            let old_key = self.dll.push_back(k, v);
+        pub fn add(&mut self,k: String,v:String,ttl: Option<usize>){
+            let old_key = self.dll.push_back(k.clone(), v);
+
             if let Some(o) = old_key{
                 println!("[REMOVE] Removing Key {o}")
             }
+            self.map.insert(k,(self.dll.tail.clone().expect("This shouldn't be possible"),ttl));
         }
 
         pub fn get(&self,k: String) -> Option<String>{

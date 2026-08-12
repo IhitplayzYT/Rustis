@@ -1,7 +1,8 @@
 pub mod redundancy{
     use crate::{helper::Helper::{HIGH, LOW}, slave::{cache::cache::Cache, dll::dll::DLL}};
-    use xxhash_rust::xxh3::xxh3_64;
-    use std::collections::{BTreeSet, BinaryHeap};
+    use tokio::sync::RwLock;
+use xxhash_rust::xxh3::xxh3_64;
+    use std::{collections::{BTreeSet, BinaryHeap}, sync::Arc};
     use rand::{Rng, distr::Alphanumeric};
 
     #[derive(Debug,Clone,PartialEq, Eq)]
@@ -53,9 +54,7 @@ pub mod redundancy{
 
         }
 
-        fn max(self, other: Self) -> Self
-        where
-            Self: Sized,
+        fn max(self, other: Self) -> Self where Self: Sized
         {
             let rank =|p: &Priority| match p{
                 Priority::Low => 0,
@@ -112,13 +111,14 @@ pub mod redundancy{
     pub struct Cache_Net{
         pub master: Cache,
         pub vnodes: BTreeSet<usize>,
-        pub redundancies: BinaryHeap<Routes>
+        pub redundancies: BinaryHeap<Routes>,
+        pub is_down:bool,
     }
 
     
     impl Cache_Net{
         pub fn new(cap:Option<usize>,evic: Option<fn (&mut DLL<String>) -> Option<String>>) -> Self{
-            Self { master: Cache::new(cap, evic), redundancies: BinaryHeap::new(),vnodes:BTreeSet::new()}
+            Self { master: Cache::new(cap, evic), redundancies: BinaryHeap::new(),vnodes:BTreeSet::new(),is_down:false}
         }
 
         pub fn add_vnodes(&mut self,n:usize){
@@ -156,7 +156,30 @@ pub mod redundancy{
             routes.iter().for_each(|x| {self.redundancies.push(Routes::new(x.0.clone(), x.1, x.2.clone()));});
         }
 
+        pub fn down(&mut self){
+            send_data();
+            self.is_down = true;
+        }
+        pub fn up(&mut self){
+            self.is_down = false;
+            resync();
+        }
+
     }
+
+
+    pub struct Rustis_Node{
+        pub cache: Arc<RwLock<Cache_Net>> 
+    }
+
+
+    impl Rustis_Node{
+        pub fn new(cap:Option<usize>,evic: Option<fn (&mut DLL<String>) -> Option<String>>) -> Self{
+            Self { cache: Arc::new(RwLock::new(Cache_Net::new(cap, evic))) }
+        }
+    }
+
+
 
 
 
