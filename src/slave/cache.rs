@@ -19,6 +19,8 @@ pub mod cache{
     }
 
     impl Cache{
+        // TODO: Make TTL actually functional 
+
         pub fn new(cap:Option<usize>,evic:Option<fn(&mut DLL<String>) -> Option<String>>) -> Self{
             Self { map: HashMap::new(), dll: DLL::new(cap, evic)}
         }
