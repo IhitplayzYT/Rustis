@@ -1,11 +1,10 @@
 pub mod dll{
     use std::collections::HashMap;
 use std::num::IntErrorKind::NegOverflow;
-use std::rc::Rc;
-    use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
 
 
-    pub type Link<T> = Option<Rc<RefCell<Node<T>>>>;
+    pub type Link<T> = Option<Arc<Mutex<Node<T>>>>;
 
     #[derive(Debug,Clone)]
     pub struct Node<T:Clone>{
@@ -16,8 +15,8 @@ use std::rc::Rc;
     }
 
     impl <T:Clone> Node<T>{
-        pub fn new(key:T,value: T) -> Rc<RefCell<Node<T>>>{
-           Rc::new(RefCell::new(Self { key,value, next: None, prev:None }))
+        pub fn new(key:T,value: T) -> Arc<Mutex<Node<T>>>{
+           Arc::new(Mutex::new(Self { key,value, next: None, prev:None }))
         }
 
         pub fn get_value(&self) -> T{
@@ -36,20 +35,20 @@ use std::rc::Rc;
             self.key = val;
         }
 
-        pub fn remove_self(node: &Rc<RefCell<Self>>) -> bool{
+        pub fn remove_self(node: &Arc<Mutex<Self>>) -> bool{
             let mut ret = false;
             let (prev,next) = {
-                let mut n = node.borrow_mut();
+                let mut n = node.lock().unwrap();
                 (n.prev.take(),n.next.take())
             };
 
             if let Some(pre) = &prev{
-                pre.borrow_mut().next = next.clone();
+                pre.lock().unwrap().next = next.clone();
                 ret = true;
             }
 
             if let Some(nxt) = &next{
-                nxt.borrow_mut().prev = prev.clone();
+                nxt.lock().unwrap().prev = prev.clone();
                 ret = true;
             }
             ret
@@ -93,12 +92,12 @@ use std::rc::Rc;
             let nn = Node::new(key,value);
             match self.tail.take(){
                 Some(old) => {
-                    old.borrow_mut().next = Some(Rc::clone(&nn));
-                    nn.borrow_mut().prev = Some(old);
+                    old.lock().unwrap().next = Some(Arc::clone(&nn));
+                    nn.lock().unwrap().prev = Some(old);
                     self.tail = Some(nn);
                 }
                 None => {
-                    self.head = Some(Rc::clone(&nn));
+                    self.head = Some(Arc::clone(&nn));
                     self.tail = Some(nn);
                 }
             }
@@ -109,10 +108,10 @@ use std::rc::Rc;
         pub fn pop_front(&mut self) -> Option<T>{
             match self.head.take(){
                 Some(x)  => {
-                    let nxt = x.borrow_mut().next.take();
+                    let nxt = x.lock().unwrap().next.take();
                     match nxt{
                         Some(o) =>{
-                            o.borrow_mut().prev = None;
+                            o.lock().unwrap().prev = None;
                             self.head = Some(o);
                         },
                         _ =>{
@@ -120,7 +119,7 @@ use std::rc::Rc;
                         }
                     }
                     self.len -= 1;
-                    return Some(x.borrow().get_key());
+                    return Some(x.lock().unwrap().get_key());
                 },
                 _ => {}
             }
@@ -130,16 +129,16 @@ use std::rc::Rc;
         pub fn pop_back(&mut self) -> Option<T>{
             match self.tail.take(){
                 Some(x) => {
-                    let prev = x.borrow_mut().prev.take();
+                    let prev = x.lock().unwrap().prev.take();
                     match prev{
                         Some(o) => {
-                            o.borrow_mut().next = None;
+                            o.lock().unwrap().next = None;
                             self.tail = Some(o);
                         },
                         _ => {self.head = None;}
                     }
                     self.len -= 1;
-                    return Some(x.borrow().get_key());
+                    return Some(x.lock().unwrap().get_key());
                 },
                 _ => {}
             }
@@ -155,13 +154,13 @@ use std::rc::Rc;
             let nn = Node::new(key,value);
             match self.head.take(){
                 Some(o) => {
-                    nn.borrow_mut().next = Some(Rc::clone(&o));
-                    o.borrow_mut().prev = Some(Rc::clone(&nn));
+                    nn.lock().unwrap().next = Some(Arc::clone(&o));
+                    o.lock().unwrap().prev = Some(Arc::clone(&nn));
                     self.head = Some(nn);
                     self.len += 1;
                 },
                 _ => {
-                    self.head = Some(Rc::clone(&nn));
+                    self.head = Some(Arc::clone(&nn));
                     self.tail = Some(nn);
                     self.len += 1;
                 }
@@ -186,7 +185,7 @@ impl<T: Clone> Iterator for Iter<T> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let node = self.current.take()?;
-        let borrowed = node.borrow();
+        let borrowed = node.lock().unwrap();
         let value = borrowed.get_value();
         let key = borrowed.get_key();
         self.current = borrowed.next.clone();
