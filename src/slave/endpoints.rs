@@ -10,40 +10,46 @@ use crate::slave::redundancy::redundancy::{Routes, Rustis_Node};
     pub const CONTAINS_V: &str = "/value/{value}";
     pub const GET_KEYS: &str = "/key";
     pub const GET_VALUES: &str = "/value";
-    pub const GET_KV: &str = "item/";
-    pub const ADD: &str = "item/{key}/{value}"; // TTL can be a query param
-    pub const GET: &str = "item/{key}";
-    pub const DELETE: &str = "item/{key}";
-    pub const UPDATE: &str = "item/{key}"; // value and TTL can be a query param(either atleats one has to be query param)
-    pub const HEALTH: &str = "health";
-    pub const INSERT_KVS: &str = "item/"; // Json body containing key value
-
+    pub const GET_KV: &str = "/item";
+    pub const ADD: &str = "/item/{key}/{value}"; // TTL can be a query param
+    pub const GET: &str = "/item/{key}";
+    pub const DELETE: &str = "/item/{key}";
+    pub const UPDATE: &str = "/item/{key}"; // value and TTL can be a query param(either atleats one has to be query param)
+    pub const HEALTH: &str = "/health";
+    pub const INSERT_KVS: &str = "/item"; // Json body containing key value
+    pub const TRANSFER: &str = "/transfer";
 
     // This endpoint will be used in both directions even by the master where they will ask the version number and vnodes hashes(Assume orchestrator has a input file cotaining all the initial Node Ips and ports )
     // So when a slave Cache_Node gets this req they have to save the Ip/port they recieved the req from since it is the masters(This occurs during init)
-    pub const COMM_MASTER: &str = "comm/"; // Json body to communicate between the Cache_Node and orchestrator
+    pub const COMM_MASTER: &str = "/comm"; // Json body to communicate between the Cache_Node and orchestrator
 
-    #[derive(Deserialize)]
-    pub struct TtlQuery {
-        ttl: Option<usize>,
-    }
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize,Serialize)]
     pub struct UpdateQuery {
         value: Option<String>,
         ttl: Option<usize>,
     }
 
-    #[derive(Serialize)]
-    pub struct KeyValueResponse {
-        key: String,
-        value: String,
+    #[derive(Deserialize,Serialize)]
+    pub struct CommMasterRequest {
+        pub ip: String,
+        pub port: u16,
+        pub name: String
     }
 
-    #[derive(Deserialize)]
-    pub struct CommMasterRequest {
-        ip: String,
-        port: u16,
+
+    #[derive(Serialize,Deserialize)]
+    pub struct Handover{
+        pub name: String,
+        pub route: Routes,
+    }
+
+    pub async fn handle_handover(State(state): State<Rustis_Node>,Json(handover): Json<Handover>) -> Result<StatusCode,StatusCode>{
+        let mut cach_net = state.cache.write().await;
+        cach_net.name = Some(handover.name);
+        cach_net.orchestrator = Some(handover.route);
+        // TODO: Now send the handle_handover post to orchestrator from here
+        Ok(StatusCode::OK)
     }
 
     pub async fn contains_key_handler(State(state): State<Rustis_Node>,Path(key):Path<String>) -> Result<Json<bool>, StatusCode>{
@@ -110,14 +116,15 @@ use crate::slave::redundancy::redundancy::{Routes, Rustis_Node};
     pub async fn comm_master_post_handler(State(state): State<Rustis_Node>,Json(req): Json<CommMasterRequest>) -> Result<Json<bool>, StatusCode>{
         let mut cache_net = state.cache.write().await;
         cache_net.save_orchestrator(req.ip, req.port);
+        cache_net.name = Some(req.name);
         Ok(Json(true))
     }
 
 
-    #[derive(Serialize)]
+    #[derive(Serialize,Deserialize)]
     pub struct Topo{
+        pub name: String,
         pub vnodes: Vec<usize>,
-        pub redundancies: Vec<Routes>
     }
 
     pub async fn comm_master_get_handler(State(state): State<Rustis_Node>) -> Result<Json<Topo>, StatusCode>{

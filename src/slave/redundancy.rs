@@ -1,12 +1,12 @@
 pub mod redundancy{
-    use crate::{helper::Helper::{HIGH, LOW}, slave::{cache::cache::Cache, dll::dll::DLL, endpoints::endpoints::Topo}};
-    use serde::Serialize;
+    use crate::{helper::Helper::{HIGH, LOW}, slave::{cache::cache::Cache, dll::dll::DLL, endpoints::endpoints::{Handover, Topo}}};
+    use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use xxhash_rust::xxh3::xxh3_64;
     use std::{collections::{BTreeSet, BinaryHeap}, sync::Arc};
     use rand::{Rng, distr::Alphanumeric};
 
-    #[derive(Debug,Clone,PartialEq, Eq,Serialize)]
+    #[derive(Debug,Clone,PartialEq, Eq,Serialize,Deserialize)]
     pub enum Priority{
         Low,
         Default,
@@ -93,11 +93,11 @@ use xxhash_rust::xxh3::xxh3_64;
     }
 
 
-    #[derive(Debug,Clone,PartialEq, Eq,Serialize)]
+    #[derive(Debug,Clone,PartialEq, Eq,Serialize,Deserialize)]
     pub struct Routes{
-        ip: String,
-        port: u16,
-        prio: Priority,
+        pub ip: String,
+        pub port: u16,
+        pub prio: Priority,
     }
 
     impl Routes{
@@ -114,6 +114,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
     #[derive(Debug)]
     pub struct Cache_Net{
+        pub name: Option<String>,
         pub cache : Cache,
         pub vnodes: BTreeSet<usize>,
         pub redundancies: BinaryHeap<Routes>,
@@ -126,7 +127,7 @@ use xxhash_rust::xxh3::xxh3_64;
     
     impl Cache_Net{
         pub fn new(cap:Option<usize>,evic: Option<fn (&mut DLL<String>) -> Option<String>>) -> Self{
-            Self { cache: Cache::new(cap, evic), redundancies: BinaryHeap::new(),vnodes:BTreeSet::new(),is_down:false,orchestrator:None, current_route_index: 0}
+            Self { name: None,cache: Cache::new(cap, evic), redundancies: BinaryHeap::new(),vnodes:BTreeSet::new(),is_down:false,orchestrator:None, current_route_index: 0}
         }
 
         pub fn save_orchestrator(&mut self,ip: String,port:u16){
@@ -180,20 +181,25 @@ use xxhash_rust::xxh3::xxh3_64;
         }
 
         pub fn get_topo(&self) -> Topo{
-            let mut redundancies = self.redundancies.clone().into_iter().collect::<Vec<Routes>>();
-            redundancies.sort();
-            Topo { vnodes: self.vnodes.clone().into_iter().collect(), redundancies}
-
+            Topo { vnodes: self.vnodes.clone().into_iter().collect(),name:self.name.clone().unwrap_or("UNAMED".to_string())}
         }
 
         pub async fn send_data(&mut self) -> Result<(), Box<dyn std::error::Error>> {
             if let Some(target) = self.get_next_highest_priority() {
                 let target_url = target.get_url();
-                if reqwest::get(&format!("{}/health", target_url)).await?.status().is_success() {
-                    let kvs: Vec<(String, String, Option<usize>)> = self.cache.get_items().into_iter().map(|(k, v)| (k.clone(), v, self.cache.get_ttl(k))).collect();
-                    
+                if reqwest::get(&format!("{}/health", &target_url)).await?.status().is_success() {
+                    let kvs: Vec<(String, String, Option<usize>)> = self.cache.get_items().into_iter().map(|(k, v)| (k.clone(), v, self.cache.get_ttl(k))).collect(); 
                     let client = reqwest::Client::new();
+                   
+                    let resp = client.post(&format!("{}/transfer/",&target_url)).json(& Handover{name:self.name.clone().unwrap_or("UNAMED".to_string()),route:self.orchestrator.clone().unwrap()}).send().await?;
+                    if !resp.status().is_success(){
+                        panic!("The redundancy server didnt accept Handover");
+                    }
+
+                                        
+
                     let resp = client.post(&format!("{}/item/", target_url)).json(&kvs).send().await?;
+
                     if resp.status().is_success() {
                         println!("[SEND_DATA] Successfully sent {} KV pairs to {}", kvs.len(), target_url);
                         let _ = self.inform_master().await;
@@ -202,6 +208,7 @@ use xxhash_rust::xxh3::xxh3_64;
                         println!("[SEND_DATA] Failed to send data to {}: {}", target_url, resp.status());
                         return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Failed to send KV data")));
                     }
+
                 } else {
                     println!("[SEND_DATA] Target {} is not healthy", target_url);
                     return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Target not healthy")));
@@ -213,7 +220,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
         pub async fn resync(&mut self) -> Result<(), Box<dyn std::error::Error>> {
             if let Some(target) = self.get_next_highest_priority() {
-                
+
                 let target_url = target.get_url();
 
                 if reqwest::get(&format!("{}/health", target_url)).await?.status().is_success() {
@@ -245,10 +252,7 @@ use xxhash_rust::xxh3::xxh3_64;
                     let change_url = format!("{}/change", orchestrator_url);
                     
                     let client = reqwest::Client::new();
-                    let resp = client.post(&change_url)
-                        .json(&target)
-                        .send()
-                        .await?;
+                    let resp = client.post(&change_url).json(&target).send().await?;
                     
                     if resp.status().is_success() {
                         println!("[INFORM_MASTER] Successfully informed master about chosen redundancy node: {}:{}", target.ip, target.port);
