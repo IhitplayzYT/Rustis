@@ -1,9 +1,11 @@
 pub mod endpoints{
-    use axum::{Json, extract::{Path, State, Query}};
+    use std::{net::IpAddr, ptr::read};
+
+use axum::{Json, extract::{Path, Query, State}, http::request};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
-use crate::slave::redundancy::redundancy::{Routes, Rustis_Node};
+use crate::{master::orchestrate::orchestrate::{Orchestrator, get_local_ip}, slave::redundancy::redundancy::{Routes, Rustis_Node}};
 
 
     pub const CONTAINS_K: &str = "/key/{key}";
@@ -17,7 +19,7 @@ use crate::slave::redundancy::redundancy::{Routes, Rustis_Node};
     pub const UPDATE: &str = "/item/{key}"; // value and TTL can be a query param(either atleats one has to be query param)
     pub const HEALTH: &str = "/health";
     pub const INSERT_KVS: &str = "/item"; // Json body containing key value
-    pub const TRANSFER: &str = "/transfer";
+    pub const TRANSFER: &str = "/transfer"; // Used internally between redundancy and nodes for transferring control
 
     // This endpoint will be used in both directions even by the master where they will ask the version number and vnodes hashes(Assume orchestrator has a input file cotaining all the initial Node Ips and ports )
     // So when a slave Cache_Node gets this req they have to save the Ip/port they recieved the req from since it is the masters(This occurs during init)
@@ -26,8 +28,8 @@ use crate::slave::redundancy::redundancy::{Routes, Rustis_Node};
 
     #[derive(Deserialize,Serialize)]
     pub struct UpdateQuery {
-        value: Option<String>,
-        ttl: Option<usize>,
+        pub value: Option<String>,
+        pub ttl: Option<usize>,
     }
 
     #[derive(Deserialize,Serialize)]
@@ -47,8 +49,28 @@ use crate::slave::redundancy::redundancy::{Routes, Rustis_Node};
     pub async fn handle_handover(State(state): State<Rustis_Node>,Json(handover): Json<Handover>) -> Result<StatusCode,StatusCode>{
         let mut cach_net = state.cache.write().await;
         cach_net.name = Some(handover.name);
-        cach_net.orchestrator = Some(handover.route);
+        cach_net.orchestrator = Some(handover.route.clone());
         // TODO: Now send the handle_handover post to orchestrator from here
+        let mut my_ip = String::new();  // Our Ip
+        match get_local_ip().unwrap(){
+            IpAddr::V4(x) => {
+                my_ip += &x.octets().map(|x| x.to_string()).join(".");
+            },
+            IpAddr::V6(y) => {
+                let m = y.segments();
+                let mut k_32 = vec![];
+                for i in 0..4{
+                k_32.push(m[2*i] as u32 + m[2*i+1] as u32);
+                }
+                my_ip += "[";
+                my_ip += &k_32.iter().map(|x| format!("{:x}",x)).collect::<Vec<String>>().join(":");
+                my_ip += "]"
+            }
+        }
+        let url = Orchestrator::build_url(&handover.route.ip, handover.route.port) + &COMM_MASTER;
+        let body = Handover{name:(*state.cache.try_read().unwrap()).name.clone().unwrap(),route:Routes { ip: my_ip, port: (*state.cache.try_read().unwrap()).port,prio:crate::slave::redundancy::redundancy::Priority::High }};
+        let conn = reqwest::Client::new();
+        let _ = conn.post(url).json(&body).send().await.unwrap();
         Ok(StatusCode::OK)
     }
 
@@ -104,10 +126,7 @@ use crate::slave::redundancy::redundancy::{Routes, Rustis_Node};
         Ok(Json("OK".to_string()))
     }
 
-    pub async fn insert_kvs_handler(
-        State(state): State<Rustis_Node>,
-        Json(kvs): Json<Vec<(String, String, Option<usize>)>>
-    ) -> Result<Json<bool>, StatusCode>{
+    pub async fn insert_kvs_handler(State(state): State<Rustis_Node>,Json(kvs): Json<Vec<(String, String, Option<usize>)>>) -> Result<Json<bool>, StatusCode>{
         let mut cache_net = state.cache.write().await;
         cache_net.cache.add_all(kvs);
         Ok(Json(true))

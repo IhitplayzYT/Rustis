@@ -203,6 +203,10 @@ pub fn lifo<T: Clone>(dll: &mut DLL<T>) -> Option<T> {
     dll.pop_back()
 }
 
+pub fn lru<T: Clone>(dll: &mut DLL<T>) -> Option<T> {
+    dll.pop_front()
+}
+
 
 pub struct EvictionRegistry<T: Clone> {
     policies: HashMap<String, EvictionPolicy<T>>,

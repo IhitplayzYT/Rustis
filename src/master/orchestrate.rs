@@ -1,11 +1,11 @@
 pub mod orchestrate{
 
-    use std::{collections::{BTreeSet, HashMap}, error::Error, net::IpAddr, sync::{Arc, LazyLock, RwLock}};
+    use std::{collections::{BTreeSet, HashMap, HashSet}, error::Error, hash::{DefaultHasher, Hash, Hasher}, net::IpAddr, sync::{Arc, LazyLock, RwLock}};
     use std::net::UdpSocket;
 
 use tokio::sync::Mutex;
 
-use crate::slave::endpoints::endpoints::{COMM_MASTER, CommMasterRequest, Topo};
+use crate::slave::endpoints::endpoints::{ADD, COMM_MASTER, CONTAINS_K, CONTAINS_V, CommMasterRequest, DELETE, GET, GET_KEYS, GET_KV, GET_VALUES, Topo, UPDATE};
 
     pub static NUMBERING: LazyLock<RwLock<usize>> = LazyLock::new(|| RwLock::new(0));
 
@@ -18,7 +18,7 @@ use crate::slave::endpoints::endpoints::{COMM_MASTER, CommMasterRequest, Topo};
     }
 
 
-    fn get_local_ip() -> std::io::Result<std::net::IpAddr> {
+    pub fn get_local_ip() -> std::io::Result<std::net::IpAddr> {
         let socket = UdpSocket::bind("0.0.0.0:0")?;
         socket.connect("8.8.8.8:80")?;
         Ok(socket.local_addr()?.ip())
@@ -55,6 +55,7 @@ use crate::slave::endpoints::endpoints::{COMM_MASTER, CommMasterRequest, Topo};
         pub fn build_url(ip: &str,port: u16) -> String{
             format!("http://{ip}:{port}",)
         }
+
 
         pub fn handle_topo(&mut self,topo: Topo){
             topo.vnodes.iter().for_each(|x| {(*self.vnode_map.try_lock().unwrap()).insert(*x, topo.name.clone());});
@@ -97,9 +98,148 @@ use crate::slave::endpoints::endpoints::{COMM_MASTER, CommMasterRequest, Topo};
                 Ok(())
             }
             
-        // TODO: Add the add,update,delete,get_keys,get_values,get_items,contains_key,contains_value
+        // TODO: Add the get_items,contains_key,contains_value
 
+        pub fn get_vnode(&self,k: &str) -> (String,u16){
+            let mut hasher = DefaultHasher::new();
+            k.hash(&mut hasher);
+            let key_hash = hasher.finish() as usize;
+            let vnode = self.ring.range(key_hash..).next().copied().or_else(|| self.ring.iter().next().copied()).expect("Ring is Empty, please use add_peers followed by init_peers then retry");
+            let node_name = (*self.vnode_map.try_lock().unwrap()).get(&vnode).expect("This cannot fail").to_string();
+            (*self.peers.try_lock().unwrap()).get(&node_name).expect("No route associated with a Node").clone()
+        }
         
+       pub async fn add(&self,k:String,v: String,ttl: Option<usize>) -> bool{
+            let dets = self.get_vnode(&k);
+            let mut url = Orchestrator::build_url(&dets.0, dets.1);
+            url += &ADD.replace("{key}", &k).replace("{value}", &v);
+            let conn = reqwest::Client::new();
+            let ret;
+            if let Some(x) = ttl{
+                ret = conn.post(url).query(&[("ttl",x)]).send().await.unwrap();
+            }else{
+                ret = conn.post(url).send().await.unwrap();
+            }
+            ret.json::<bool>().await.unwrap()
+       }
+
+       pub async fn add_kvs(&self,kvs: Vec<(String,String,Option<usize>)>) -> bool{
+        let mut ret = true;
+        for (k,v,ttl) in kvs{
+            ret &= self.add(k, v, ttl).await;
+        }
+        ret
+       }
+
+
+       pub async fn update(&self,k:String,v: Option<String>,ttl: Option<usize>) -> bool{
+            let dets = self.get_vnode(&k);
+            let mut url = Orchestrator::build_url(&dets.0, dets.1);
+            url += &UPDATE.replace("{key}", &k);
+            let conn = reqwest::Client::new();
+            let mut params= vec![];
+            if let Some(ref value) = v {
+                params.push(("value", value.clone()));
+            }
+            if let Some(ttl) = ttl {
+                params.push(("ttl", ttl.to_string()));
+            }
+
+            let resp = conn.put(url).query(&params).send().await.unwrap();
+            resp.json::<bool>().await.unwrap()
+       }
+
+        pub async fn contains_key(&self,k:&str) -> bool{
+            let dets = self.get_vnode(k);
+            let mut url = Orchestrator::build_url(&dets.0, dets.1);
+            url += &CONTAINS_K.replace("{key}", k);
+            let conn = reqwest::Client::new();
+            let resp = conn.get(url).send().await.unwrap();
+            resp.json::<bool>().await.unwrap()
+       }
+
+        pub async fn contains_value(&self,v:&str) -> bool{
+            let vnodes = &*self.vnode_map.try_lock().unwrap();
+            let uniq: HashSet<&String> = vnodes.iter().map(|(_,v)|{v}).collect::<Vec<&String>>().into_iter().collect();
+            let conn = reqwest::Client::new();
+            let peers =&*self.peers.try_lock().unwrap();
+            for i in uniq{
+                let rt = peers.get(i).expect("Not possible");
+                let url = Orchestrator::build_url(&rt.0,rt.1) + &CONTAINS_V.replace("{value}", v);
+                let resp = conn.get(url).send().await.unwrap();
+                if resp.json::<bool>().await.unwrap(){
+                    return true;
+                }
+            }
+           false 
+        }
+
+
+        pub async fn get_keys(&self) -> Vec<String>{
+            let vnodes = &*self.vnode_map.try_lock().unwrap();
+            let uniq: HashSet<&String> = vnodes.iter().map(|(_,v)|{v}).collect::<Vec<&String>>().into_iter().collect();
+            let conn = reqwest::Client::new();
+            let mut ret = vec![];
+            let peers =&*self.peers.try_lock().unwrap();
+            for i in uniq{
+                let rt = peers.get(i).expect("Not possible");
+                let url = Orchestrator::build_url(&rt.0,rt.1) + &GET_KEYS;
+                let resp = conn.get(url).send().await.unwrap();
+                ret.append(&mut resp.json::<Vec<String>>().await.unwrap());
+            }
+            ret   
+        }
+
+        pub async fn get_values(&self) -> Vec<String>{
+            let vnodes = &*self.vnode_map.try_lock().unwrap();
+            let uniq: HashSet<&String> = vnodes.iter().map(|(_,v)|{v}).collect::<Vec<&String>>().into_iter().collect();
+            let conn = reqwest::Client::new();
+            let mut ret = vec![];
+            let peers = &*self.peers.try_lock().unwrap();
+            for i in uniq{
+                let rt = peers.get(i).expect("Not possible");
+                let url = Orchestrator::build_url(&rt.0,rt.1) + &GET_VALUES;
+                let resp = conn.get(url).send().await.unwrap();
+                ret.append(&mut resp.json::<Vec<String>>().await.unwrap());
+            }
+            ret   
+        }
+
+        pub async fn get_items(&self) -> Vec<(String,String)>{
+            let vnodes = &*self.vnode_map.try_lock().unwrap();
+            let uniq: HashSet<&String> = vnodes.iter().map(|(_,v)|{v}).collect::<Vec<&String>>().into_iter().collect();
+            let conn = reqwest::Client::new();
+            let mut ret = vec![];
+            let peers = &*self.peers.try_lock().unwrap();
+            for i in uniq{
+                let rt = peers.get(i).expect("Not possible");
+                let url = Orchestrator::build_url(&rt.0,rt.1) + &GET_KV;
+                let resp = conn.get(url).send().await.unwrap();
+                ret.append(&mut resp.json::<Vec<(String,String)>>().await.unwrap());
+            }
+            ret
+        }
+
+
+        pub async fn get(&self,k: &str) -> String{
+            let dets = self.get_vnode(&k);
+            let mut url = Orchestrator::build_url(&dets.0, dets.1);
+            url += &GET.replace("{key}", k);
+            let conn = reqwest::Client::new();
+            let resp = conn.get(url).send().await.unwrap();
+            resp.json::<String>().await.unwrap()
+        }
+
+
+
+        pub async fn delete(&self,k:&str) -> bool{
+            let dets = self.get_vnode(&k);
+            let mut url = Orchestrator::build_url(&dets.0, dets.1);
+            url += &DELETE.replace("{key}", &k);
+            let conn = reqwest::Client::new();
+            let resp = conn.delete(url).send().await.unwrap();
+            resp.json::<bool>().await.unwrap()
+       }
 
 
     }

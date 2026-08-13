@@ -1,9 +1,9 @@
 
 use std::error::Error;
 
-use axum::{Router, routing::{get, post, delete, put}, extract::State};
+use axum::{Router, routing::{get, post, delete, put}};
 
-use crate::{helper::Helper::{CLI, Role}, slave::{dll::dll::{EvictionRegistry, fifo, lifo}, redundancy::redundancy::Rustis_Node}, slave::endpoints::endpoints::*};
+use crate::{helper::Helper::{CLI, Role}, slave::{dll::dll::{EvictionRegistry, fifo, lifo, lru}, endpoints::endpoints::*, redundancy::redundancy::Rustis_Node}};
 
 mod helper;
 mod slave;
@@ -22,6 +22,7 @@ async fn main() -> Result<(),Box<dyn Error>>{
     let mut registry = EvictionRegistry::<String>::new();
     registry.register("fifo", fifo::<String>);
     registry.register("lifo", lifo::<String>);
+    registry.register("lru", lru::<String>);
 
     match clargs.role{
         Role::Master => {

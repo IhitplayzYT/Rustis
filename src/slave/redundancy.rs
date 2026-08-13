@@ -121,13 +121,15 @@ use xxhash_rust::xxh3::xxh3_64;
         pub is_down:bool,
         pub orchestrator: Option<Routes>,
         current_route_index: usize,
+        pub port: u16
+
     }
 
 
     
     impl Cache_Net{
-        pub fn new(cap:Option<usize>,evic: Option<fn (&mut DLL<String>) -> Option<String>>) -> Self{
-            Self { name: None,cache: Cache::new(cap, evic), redundancies: BinaryHeap::new(),vnodes:BTreeSet::new(),is_down:false,orchestrator:None, current_route_index: 0}
+        pub fn new(cap:Option<usize>,evic: Option<fn (&mut DLL<String>) -> Option<String>>,port: Option<u16>) -> Self{
+            Self { name: None,cache: Cache::new(cap, evic), redundancies: BinaryHeap::new(),vnodes:BTreeSet::new(),is_down:false,orchestrator:None, current_route_index: 0,port:port.unwrap_or(8080)}
         }
 
         pub fn save_orchestrator(&mut self,ip: String,port:u16){
@@ -294,8 +296,8 @@ use xxhash_rust::xxh3::xxh3_64;
 
 
     impl Rustis_Node{
-        pub fn new(cap:Option<usize>,evic: Option<fn (&mut DLL<String>) -> Option<String>>) -> Self{
-            Self { cache: Arc::new(RwLock::new(Cache_Net::new(cap, evic))) }
+        pub fn new(cap:Option<usize>,evic: Option<fn (&mut DLL<String>) -> Option<String>>,port:Option<u16>) -> Self{
+            Self { cache: Arc::new(RwLock::new(Cache_Net::new(cap, evic,port))) }
         }
     }
 
