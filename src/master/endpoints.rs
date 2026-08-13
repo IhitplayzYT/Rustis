@@ -2,28 +2,43 @@ pub mod endpoints{
     use axum::{Json, extract::{Path, Query, State}};
 use reqwest::StatusCode;
 
-use crate::{helper::Helper::OK, master::orchestrate::orchestrate::Orchestrator, slave::endpoints::endpoints::{Handover, Topo, UpdateQuery}};
+use crate::{ master::orchestrate::orchestrate::Orchestrator, slave::endpoints::endpoints::{Handover, Topo, UpdateQuery}};
 
 
         pub async fn handle_node_data(State(orch):State<Orchestrator>,Json(topo):Json<Topo>){
             let n_m = topo.name;
-            topo.vnodes.iter().for_each(|x| {(*orch.vnode_map.try_lock().unwrap()).insert(*x, n_m.clone());});
+            let mut vnode_map = orch.vnode_map.lock().await;
+            topo.vnodes.iter().for_each(|x| {vnode_map.insert(*x, n_m.clone());});
         }
 
         // Handles Routing name_node to the following node will use /transfer endpoint only
-        pub async fn handle_node_change(State(mut orch):State<Orchestrator>,Json(handover):Json<Handover>){
+        pub async fn handle_node_change(State(orch):State<Orchestrator>,Json(handover):Json<Handover>){
             let n_m = &handover.name;
-            let ids = (*orch.vnode_map.try_lock().unwrap()).iter().filter_map(|(k,v)| if v == n_m{Some(*k)}else{None}).collect::<Vec<usize>>();
-            ids.iter().for_each(|x| {orch.ring.remove(x);});
-            ids.iter().for_each(|x| {(*orch.vnode_map.try_lock().unwrap()).remove(x);});
+            let vnode_map = orch.vnode_map.lock().await;
+            let ids = vnode_map.iter().filter_map(|(k,v)| if v == n_m{Some(*k)}else{None}).collect::<Vec<usize>>();
+            drop(vnode_map);
+            
+            let mut ring = orch.ring.lock().await;
+            ids.iter().for_each(|x| {ring.remove(x);});
+            drop(ring);
+            
+            let mut vnode_map = orch.vnode_map.lock().await;
+            ids.iter().for_each(|x| {vnode_map.remove(x);});
             // All vnodes removed by here
 
             // Added the name map and ring
-            (*orch.peers.try_lock().unwrap()).insert(handover.name,(handover.route.ip.clone(),handover.route.port));
+            let mut peers = orch.peers.lock().await;
+            peers.insert(handover.name.clone(),(handover.route.ip.clone(),handover.route.port));
+            drop(peers);
+            
             // Update the vnodes and 
             let conn = reqwest::Client::new();
             let ret = conn.get(Orchestrator::build_url(&handover.route.ip, handover.route.port)).send().await.unwrap();
-            orch.handle_topo(ret.json::<Topo>().await.unwrap());
+            let topo = ret.json::<Topo>().await.unwrap();
+            let mut vnode_map = orch.vnode_map.lock().await;
+            topo.vnodes.iter().for_each(|x| {vnode_map.insert(*x, topo.name.clone());});
+            let mut ring = orch.ring.lock().await;
+            topo.vnodes.iter().for_each(|x| {ring.insert(*x);});
         }
 
         pub async fn handle_get(State(orch): State<Orchestrator>,Path(key):Path<String>) -> Result<Json<String>,StatusCode>{

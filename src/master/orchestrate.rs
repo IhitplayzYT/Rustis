@@ -9,9 +9,9 @@ use crate::slave::endpoints::endpoints::{ADD, COMM_MASTER, CONTAINS_K, CONTAINS_
 
     pub static NUMBERING: LazyLock<RwLock<usize>> = LazyLock::new(|| RwLock::new(0));
 
-    #[derive(Debug)]
+    #[derive(Debug,Clone)]
     pub struct Orchestrator{
-        pub ring: BTreeSet<usize>, // Ordered representation of the vnodes 
+        pub ring: Arc<Mutex<BTreeSet<usize>>>, // Ordered representation of the vnodes 
         pub peers: Arc<Mutex<HashMap<String,(String,u16)>>>, // Maps node name to connection route
         pub vnode_map: Arc<Mutex<HashMap<usize,String>>>,  // Maps vnode hash to node name
         pub port: u16
@@ -29,7 +29,7 @@ use crate::slave::endpoints::endpoints::{ADD, COMM_MASTER, CONTAINS_K, CONTAINS_
     impl Orchestrator{
 
         pub fn new(port: Option<u16>) -> Self{
-            Self { ring: BTreeSet::new(),peers:Arc::new(Mutex::new(HashMap::new())),vnode_map:Arc::new(Mutex::new(HashMap::new())),port:port.unwrap_or(8080)}
+            Self { ring: Arc::new(Mutex::new(BTreeSet::new())),peers:Arc::new(Mutex::new(HashMap::new())),vnode_map:Arc::new(Mutex::new(HashMap::new())),port:port.unwrap_or(8080)}
         }
 
         pub fn get_new_name(&self) -> String{
@@ -59,7 +59,8 @@ use crate::slave::endpoints::endpoints::{ADD, COMM_MASTER, CONTAINS_K, CONTAINS_
 
         pub fn handle_topo(&mut self,topo: Topo){
             topo.vnodes.iter().for_each(|x| {(*self.vnode_map.try_lock().unwrap()).insert(*x, topo.name.clone());});
-            topo.vnodes.iter().for_each(|x| {self.ring.insert(*x);});
+            let mut ring = self.ring.try_lock().unwrap();
+            topo.vnodes.iter().for_each(|x| {ring.insert(*x);});
         }
 
 
@@ -72,12 +73,8 @@ use crate::slave::endpoints::endpoints::{ADD, COMM_MASTER, CONTAINS_K, CONTAINS_
                     },
                     IpAddr::V6(y) => {
                       let m = y.segments();
-                      let mut k_32 = vec![];
-                      for i in 0..4{
-                        k_32.push(m[2*i] as u32 + m[2*i+1] as u32);
-                      }
                       k = "[".to_string();
-                      k += &k_32.iter().map(|x| format!("{:x}",x)).collect::<Vec<String>>().join(":");
+                      k += &m.iter().map(|x| format!("{:x}", x)).collect::<Vec<String>>().join(":");
                       k += "]"
                     }
                 }
@@ -93,7 +90,8 @@ use crate::slave::endpoints::endpoints::{ADD, COMM_MASTER, CONTAINS_K, CONTAINS_
                 let resp = conn.get(&url).send().await.unwrap();
                 let topo = resp.json::<Topo>().await.unwrap();
                 topo.vnodes.iter().for_each(|x| {(*self.vnode_map.try_lock().unwrap()).insert(*x, topo.name.clone());});
-                topo.vnodes.iter().for_each(|x| {self.ring.insert(*x);});
+                let mut ring = self.ring.try_lock().unwrap();
+                topo.vnodes.iter().for_each(|x| {ring.insert(*x);});
             }
                 Ok(())
             }
@@ -104,7 +102,8 @@ use crate::slave::endpoints::endpoints::{ADD, COMM_MASTER, CONTAINS_K, CONTAINS_
             let mut hasher = DefaultHasher::new();
             k.hash(&mut hasher);
             let key_hash = hasher.finish() as usize;
-            let vnode = self.ring.range(key_hash..).next().copied().or_else(|| self.ring.iter().next().copied()).expect("Ring is Empty, please use add_peers followed by init_peers then retry");
+            let ring = self.ring.try_lock().unwrap();
+            let vnode = ring.range(key_hash..).next().copied().or_else(|| ring.iter().next().copied()).expect("Ring is Empty, please use add_peers followed by init_peers then retry");
             let node_name = (*self.vnode_map.try_lock().unwrap()).get(&vnode).expect("This cannot fail").to_string();
             (*self.peers.try_lock().unwrap()).get(&node_name).expect("No route associated with a Node").clone()
         }

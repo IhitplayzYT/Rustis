@@ -58,12 +58,8 @@ use crate::{master::orchestrate::orchestrate::{Orchestrator, get_local_ip}, slav
             },
             IpAddr::V6(y) => {
                 let m = y.segments();
-                let mut k_32 = vec![];
-                for i in 0..4{
-                k_32.push(m[2*i] as u32 + m[2*i+1] as u32);
-                }
                 my_ip += "[";
-                my_ip += &k_32.iter().map(|x| format!("{:x}",x)).collect::<Vec<String>>().join(":");
+                my_ip += &m.iter().map(|x| format!("{:x}", x)).collect::<Vec<String>>().join(":");
                 my_ip += "]"
             }
         }
